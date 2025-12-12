@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "geolocation.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "geolocation.py" }
+  ]
+}
