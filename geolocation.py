@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 import requests
 import json
 import os
-#geomap
 
 load_dotenv()   # Load .env file
 
@@ -13,21 +12,15 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 app = FastAPI()
 
 # -----------------------------------------
-# Reference Location
+# Reference Location (no file write)
 # -----------------------------------------
-def save_reference_location():
-    reference = {
+def get_reference_location():
+    return {
         "name": "BridgeLabz Solutions Bengaluru",
         "latitude": 12.9145732,
         "longitude": 77.6385797,
         "address": "5, 14th A Main Rd, HSR Layout, Bengaluru, Karnataka 560102"
     }
-    try:
-        with open("reference_location.json", "w") as f:
-            json.dump(reference, f, indent=4)
-    except (PermissionError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"File error: {str(e)}")
-    return reference
 
 # -----------------------------------------
 # Current Location
@@ -109,7 +102,7 @@ class LocationRequest(BaseModel):
 # -----------------------------------------
 @app.get("/current-location")
 def current_location():
-    reference = save_reference_location()
+    reference = get_reference_location()
     current = get_current_location()
     if "error" in current:
         return {"message": "Error fetching current location", "details": current["error"]}
@@ -117,7 +110,7 @@ def current_location():
 
 @app.post("/search-location")
 def search_location_post(request: LocationRequest):
-    reference = save_reference_location()
+    reference = get_reference_location()
     searched = search_location(request.place)
     if not searched:
         return {"message": "No location found"}
