@@ -1,127 +1,96 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
-from dotenv import load_dotenv
 import requests
-import json
 import os
+from dotenv import load_dotenv
 
-load_dotenv()   # Load .env file
+load_dotenv()
+
+app = FastAPI(title="Location APIs")
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-app = FastAPI()
 
 # -----------------------------------------
-# Reference Location (no file write)
+# REFERENCE LOCATION (BRIDGELABZ)
 # -----------------------------------------
 def get_reference_location():
     return {
         "name": "BridgeLabz Solutions Bengaluru",
         "latitude": 12.9145732,
-        "longitude": 77.6385797,
-        "address": "5, 14th A Main Rd, HSR Layout, Bengaluru, Karnataka 560102"
+        "longitude": 77.6385797
     }
 
-# -----------------------------------------
-# Current Location
-# -----------------------------------------
-def get_current_location():
-    if not GOOGLE_API_KEY:
-        raise HTTPException(status_code=500, detail="Missing Google API key")
-
-    try:
-        geo_url = f"https://www.googleapis.com/geolocation/v1/geolocate?key={GOOGLE_API_KEY}"
-        geo_res = requests.post(geo_url, timeout=5).json()
-
-        if "location" not in geo_res:
-            return {"error": geo_res}
-
-        lat = geo_res["location"]["lat"]
-        lng = geo_res["location"]["lng"]
-
-        rev_url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lng}&key={GOOGLE_API_KEY}"
-        rev_res = requests.get(rev_url, timeout=5).json()
-
-        address = "Unknown"
-        if rev_res.get("status") == "OK" and rev_res.get("results"):
-            address = rev_res["results"][0].get("formatted_address", "Unknown")
-
-        return {"address": address, "latitude": lat, "longitude": lng}
-
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Network error: {str(e)}")
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
-        raise HTTPException(status_code=500, detail=f"Parsing error: {str(e)}")
 
 # -----------------------------------------
-# Search Location
+# MATCH LOGIC
 # -----------------------------------------
-def search_location(place: str):
-    if not GOOGLE_API_KEY:
-        raise HTTPException(status_code=500, detail="Missing Google API key")
+def is_match(loc, reference):
+    return (
+        round(loc["latitude"], 4) == round(reference["latitude"], 4)
+        and round(loc["longitude"], 4) == round(reference["longitude"], 4)
+    )
 
-    try:
-        url = f"https://maps.googleapis.com/maps/api/geocode/json?address={place}&key={GOOGLE_API_KEY}"
-        r = requests.get(url, timeout=5).json()
-
-        if r.get("status") != "OK" or not r.get("results"):
-            return None
-
-        result = r["results"][0]
-        return {
-            "address": result.get("formatted_address", "Unknown"),
-            "latitude": result["geometry"]["location"]["lat"],
-            "longitude": result["geometry"]["location"]["lng"]
-        }
-
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Network error: {str(e)}")
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
-        raise HTTPException(status_code=500, detail=f"Parsing error: {str(e)}")
 
 # -----------------------------------------
-# Check Match
-# -----------------------------------------
-def check_location_match(loc, ref):
-    try:
-        return (
-            round(loc["latitude"], 4) == round(ref["latitude"], 4) and
-            round(loc["longitude"], 4) == round(ref["longitude"], 4)
-        )
-    except (TypeError, KeyError) as e:
-        raise HTTPException(status_code=500, detail=f"Logic error: {str(e)}")
-
-# -----------------------------------------
-# Request Model for POST
-# -----------------------------------------
-class LocationRequest(BaseModel):
-    place: str
-
-# -----------------------------------------
-# FastAPI Endpoints
+# GET API – CURRENT LOCATION (NO MATCH CHECK)
 # -----------------------------------------
 @app.get("/current-location")
-def current_location():
-    reference = get_reference_location()
-    current = get_current_location()
-    if "error" in current:
-        return {"message": "Error fetching current location", "details": current["error"]}
-    return {"reference": reference, "current": current}
+def get_current_location():
 
+    # Get live latitude & longitude
+    geo_url = f"https://www.googleapis.com/geolocation/v1/geolocate?key={GOOGLE_API_KEY}"
+    geo_res = requests.post(geo_url).json()
+
+    lat = geo_res["location"]["lat"]
+    lng = geo_res["location"]["lng"]
+
+    # Reverse geocoding → full address
+    rev_url = (
+        f"https://maps.googleapis.com/maps/api/geocode/json?"
+        f"latlng={lat},{lng}&key={GOOGLE_API_KEY}"
+    )
+    rev_res = requests.get(rev_url).json()
+
+    address = rev_res["results"][0]["formatted_address"]
+
+    return {
+        "address": address,
+        "latitude": lat,
+        "longitude": lng
+    }
+
+
+# -----------------------------------------
+# REQUEST BODY MODEL
+# -----------------------------------------
+class SearchPlace(BaseModel):
+    place: str
+
+
+# -----------------------------------------
+# POST API – SEARCH LOCATION (WITH MATCH CHECK)
+# -----------------------------------------
 @app.post("/search-location")
-def search_location_post(request: LocationRequest):
-    reference = get_reference_location()
-    searched = search_location(request.place)
-    if not searched:
-        return {"message": "No location found"}
+def search_location(data: SearchPlace):
 
-    if check_location_match(searched, reference):
-        return {"message": "Search location matches reference", "location": searched}
-    else:
-        return {
-            "message": "Search location does not match reference",
-            "searched_latitude": searched["latitude"],
-            "searched_longitude": searched["longitude"],
-            "reference_latitude": reference["latitude"],
-            "reference_longitude": reference["longitude"]
-        }
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={data.place}&key={GOOGLE_API_KEY}"
+    res = requests.get(url).json()
+
+    result = res["results"][0]
+
+    searched = {
+        "latitude": result["geometry"]["location"]["lat"],
+        "longitude": result["geometry"]["location"]["lng"]
+    }
+
+    reference = get_reference_location()
+
+    status = "MATCH" if is_match(searched, reference) else "NOT MATCH"
+
+    return {
+        "status": status,
+        "searched_place": data.place,
+        "latitude": searched["latitude"],
+        "longitude": searched["longitude"]
+    }
